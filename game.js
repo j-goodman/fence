@@ -79,6 +79,7 @@ const state = {
 	sellPhaseRanks: new Map(),
 	sellHeatCheck: null,
 	sellRoundTransition: null,
+	buySkipTransition: null,
 	buyStage: 1,
 	showHowToPlay: false,
 	openingDealOrder: new Map(),
@@ -89,6 +90,8 @@ const state = {
 }
 
 const tintedTypeImages = new Map()
+const BUY_SKIP_NOTICE_MS = 1000
+const BUY_QUEUE_CARD_SCALE = 1.25
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
@@ -141,6 +144,23 @@ const deckSliceLabel = stage => {
 }
 
 const currentStageStart = () => (state.buyStage - 1) * BUY_STAGE_SIZE
+const canAffordRemainingStageCards = () => {
+	for (const card of state.queue) {
+		if (state.cash >= buyPriceForCard(card)) {
+			return true
+		}
+	}
+
+	const stageLimit = Math.min(currentStageLimit(), state.deck.length)
+
+	for (let index = state.dealCursor; index < stageLimit; index += 1) {
+		if (state.cash >= buyPriceForCard(state.deck[index])) {
+			return true
+		}
+	}
+
+	return false
+}
 
 const cardsSeenInStage = () => Math.max(0, state.dealCursor - currentStageStart())
 
@@ -581,6 +601,11 @@ const applySellRoundTransition = transition => {
 	finalizeRound()
 }
 
+const applyBuySkipTransition = transition => {
+	state.buySkipTransition = null
+	advanceToSellPhase(transition.message)
+}
+
 const updateSellRoundTransition = deltaMs => {
 	if (!state.sellRoundTransition) {
 		return false
@@ -596,6 +621,21 @@ const updateSellRoundTransition = deltaMs => {
 	return false
 }
 
+const updateBuySkipTransition = deltaMs => {
+	if (!state.buySkipTransition) {
+		return false
+	}
+
+	state.buySkipTransition.elapsed += deltaMs
+
+	if (state.buySkipTransition.elapsed < state.buySkipTransition.duration) {
+		return true
+	}
+
+	applyBuySkipTransition(state.buySkipTransition)
+	return false
+}
+
 const animateQueueFrame = timestamp => {
 	state.animationFrameId = null
 
@@ -606,8 +646,9 @@ const animateQueueFrame = timestamp => {
 	const hasActiveCashTicker = updateCashTicker(deltaMs)
 	const hasActiveSellHeatCheck = updateSellHeatCheck(deltaMs)
 	const hasActiveSellRoundTransition = updateSellRoundTransition(deltaMs)
+	const hasActiveBuySkipTransition = updateBuySkipTransition(deltaMs)
 
-	if (hasActiveCardMotion || hasActiveCashTicker || hasActiveSellHeatCheck || hasActiveSellRoundTransition) {
+	if (hasActiveCardMotion || hasActiveCashTicker || hasActiveSellHeatCheck || hasActiveSellRoundTransition || hasActiveBuySkipTransition) {
 		render()
 
 		if (state.animationFrameId === null) {
@@ -971,20 +1012,9 @@ const removeCardFromCollection = (collection, cardId) => {
 
 	return collection.splice(index, 1)[0]
 }
-
-const maybeAdvanceFromBuyPhase = () => {
-	refillQueue()
-
-	if (state.queue.length > 0 || state.dealCursor < currentStageLimit()) {
-		return
-	}
-
+const advanceToSellPhase = notice => {
 	state.phase = `sell-${state.buyStage}`
-	setNotice(
-		state.buyStage < TOTAL_BUY_STAGES
-			? `${sellRoundTitle(state.buyStage)}. Sell any cards you want, or keep them for ${deckSliceLabel(state.buyStage + 1)}.`
-			: 'Final sell round. Anything left in your hand when the week closes is sold automatically.'
-	)
+	setNotice(notice)
 
 	if (state.hand.length === 0) {
 		state.sellHeatCheck = null
@@ -993,6 +1023,37 @@ const maybeAdvanceFromBuyPhase = () => {
 	}
 
 	startSellHeatCheck()
+}
+
+const maybeAdvanceFromBuyPhase = () => {
+	refillQueue()
+
+	if (state.queue.length === 0 && state.dealCursor >= currentStageLimit()) {
+		advanceToSellPhase(
+			state.buyStage < TOTAL_BUY_STAGES
+				? `${sellRoundTitle(state.buyStage)}. Sell any cards you want, or keep them for ${deckSliceLabel(state.buyStage + 1)}.`
+				: 'Final sell round. Anything left in your hand when the week closes is sold automatically.'
+		)
+		return
+	}
+
+	if (canAffordRemainingStageCards()) {
+		return
+	}
+
+	if (cardsSeenInStage() >= BUY_STAGE_SIZE / 2) {
+		return
+	}
+
+	state.buySkipTransition = {
+		elapsed: 0,
+		duration: BUY_SKIP_NOTICE_MS,
+		message:
+			state.buyStage < TOTAL_BUY_STAGES
+				? `${sellRoundTitle(state.buyStage)}. You can't afford any more offers, so the rest of this buy round is skipped.`
+				: 'Final sell round. You can no longer afford the remaining offers, so the week moves to the last sell round.'
+	}
+	startAnimationLoop()
 }
 
 const buyCard = cardId => {
@@ -1341,9 +1402,10 @@ const drawHowToPlayOverlay = () => {
 	const innerPadding = 26
 	const contentWidth = overlayWidth - innerPadding * 2
 	const chipGap = 8
-	const chipHeight = 54
+	const iconSize = 43
+	const chipHeight = iconSize + 24
 	const chipWidth = Math.max(132, Math.floor((contentWidth - chipGap) / 2))
-	const iconSize = 27
+	const chipTextX = 12 + iconSize + 12
 
 	ctx.fillStyle = 'rgba(7, 10, 13, 0.82)'
 	ctx.fillRect(0, 0, state.width, state.height)
@@ -1426,7 +1488,7 @@ const drawHowToPlayOverlay = () => {
 		ctx.textAlign = 'left'
 		ctx.textBaseline = 'middle'
 		ctx.font = `600 21px ${mainFont}`
-		ctx.fillText(`${type.count} ${type.plural.toLowerCase()}`, chipX + 54, chipY + chipHeight / 2)
+		ctx.fillText(`${type.count} ${type.plural.toLowerCase()}`, chipX + chipTextX, chipY + chipHeight / 2)
 	})
 
 	registerButton({
@@ -1472,8 +1534,8 @@ const drawCardFace = (card, x, y, size, footerText) => {
 	ctx.restore()
 
 	const image = getTypeImageAsset(card.type)
-	const imageSize = size * (compactCard ? 0.42 : 0.54)
-	const imageY = y + cardHeight * (compactCard ? 0.29 : 0.23)
+	const imageSize = size * (compactCard ? 0.49 : 0.66)
+	const imageY = y + cardHeight * (compactCard ? 0.22 : 0.17)
 
 	if (image) {
 		ctx.drawImage(image, x + (size - imageSize) / 2, imageY, imageSize, imageSize)
@@ -1698,14 +1760,14 @@ const getBuyRowLayout = (startY, count) => {
 	const padding = clamp(state.width * 0.032, 16, 38)
 	const gap = clamp(state.width * 0.012, 6, 14)
 	const totalSlots = 5
-	let size = 152
+	let size = Math.round(152 * BUY_QUEUE_CARD_SCALE)
 	const maxWidth = state.width - padding * 2
 
 	while (size > 56 && size * totalSlots + gap * (totalSlots - 1) > maxWidth) {
 		size -= 2
 	}
 
-	size = clamp(size, 56, 152)
+	size = clamp(size, 56, Math.round(152 * BUY_QUEUE_CARD_SCALE))
 	const cardHeight = cardHeightFor(size)
 
 	const totalWidth = size * totalSlots + gap * (totalSlots - 1)
@@ -2039,6 +2101,29 @@ const drawSellRoundTransitionOverlay = () => {
 	ctx.fillText(message, state.width / 2, y + overlayHeight / 2)
 }
 
+const drawBuySkipTransitionOverlay = () => {
+	if (!state.buySkipTransition) {
+		return
+	}
+
+	const message = state.buySkipTransition.message
+	ctx.font = `600 16px ${mainFont}`
+	const overlayWidth = Math.min(state.width - 32, Math.max(320, Math.ceil(ctx.measureText(message).width + 56)))
+	const overlayHeight = 82
+	const x = (state.width - overlayWidth) / 2
+	const y = (state.height - overlayHeight) / 2
+
+	ctx.fillStyle = 'rgba(7, 10, 13, 0.48)'
+	ctx.fillRect(0, 0, state.width, state.height)
+	fillRoundedRect(x, y, overlayWidth, overlayHeight, 18, THEME.panel)
+
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'middle'
+	ctx.fillStyle = THEME.text
+	ctx.font = `600 16px ${mainFont}`
+	ctx.fillText(message, state.width / 2, y + overlayHeight / 2)
+}
+
 const phaseLabel = () => {
 	if (state.phase === 'buy-1') {
 		return buyRoundTitle(1)
@@ -2144,6 +2229,10 @@ const render = () => {
 	if (state.sellRoundTransition) {
 		drawSellRoundTransitionOverlay()
 	}
+
+	if (state.buySkipTransition) {
+		drawBuySkipTransitionOverlay()
+	}
 }
 
 const resizeCanvas = () => {
@@ -2160,7 +2249,7 @@ const resizeCanvas = () => {
 }
 
 const buttonAtPoint = (x, y) => {
-	if (state.sellHeatCheck || state.sellRoundTransition) {
+	if (state.sellHeatCheck || state.sellRoundTransition || state.buySkipTransition) {
 		return null
 	}
 
