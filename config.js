@@ -15,7 +15,7 @@ window.FENCE_CONFIG = {
 			singular: 'Portrait',
 			plural: 'Portraits',
 			count: 7,
-			marketValue: 1080,
+			marketValue: 1100,
 			price: 6000,
 			accent: '#8d6a22',
 			imagePath: 'assets/cards/portrait.png'
@@ -25,7 +25,7 @@ window.FENCE_CONFIG = {
 			singular: 'Statue',
 			plural: 'Statues',
 			count: 6,
-			marketValue: 640,
+			marketValue: 700,
 			price: 3000,
 			accent: '#8b5541',
 			imagePath: 'assets/cards/statue.png'
@@ -35,7 +35,7 @@ window.FENCE_CONFIG = {
 			singular: 'Vase',
 			plural: 'Vases',
 			count: 5,
-			marketValue: 520,
+			marketValue: 500,
 			price: 2000,
 			accent: '#617231',
 			imagePath: 'assets/cards/vase.png'
@@ -45,7 +45,7 @@ window.FENCE_CONFIG = {
 			singular: 'Manuscript',
 			plural: 'Manuscripts',
 			count: 4,
-			marketValue: 400,
+			marketValue: 450,
 			price: 1200,
 			accent: '#4d5967',
 			imagePath: 'assets/cards/manuscript.png'
@@ -66,7 +66,7 @@ window.FENCE_CONFIG = {
 			plural: 'Watches',
 			count: 2,
 			marketValue: 200,
-			price: 150,
+			price: 130,
 			accent: '#4d6e8f',
 			imagePath: 'assets/cards/watch.png'
 		},
@@ -76,7 +76,7 @@ window.FENCE_CONFIG = {
 			plural: 'Silverware',
 			count: 1,
 			marketValue: 100,
-			price: 50,
+			price: 30,
 			accent: '#6e7478',
 			imagePath: 'assets/cards/silverware.png'
 		}
@@ -89,8 +89,8 @@ window.FENCE_CONFIG = {
 	CREDIT_CEILING: 50000,
 	SELL_ROUND_OVERHEAD: 300,
 	SELL_ROUND_OVERHEAD_NOTICE_MS: 1450,
-	HEAT_VALUES: [2, 4, 6, 7, 9, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30, 32, 36, 39, 42, 46, 49, 53, 63, 76, 86, 89, 93],
-	TINTED_TYPE_IMAGE_KEYS: new Set(['silverware', 'watch', 'clock', 'manuscript', 'statue']),
+	HEAT_VALUES: [1, 2, 4, 6, 7, 9, 10, 11, 12, 13, 14, 15, 16, 17, 18, 19, 20, 21, 22, 23, 24, 25, 27, 28, 29, 30, 32, 36, 39, 42, 49, 53, 63, 76, 89, 93],
+	TINTED_TYPE_IMAGE_KEYS: new Set(),
 	THEME: {
 		backgroundTop: '#101216',
 		backgroundBottom: '#171b20',
@@ -125,7 +125,7 @@ window.FENCE_CONFIG = {
 	CASH_TICKER_DURATION_MS: 1080,
 	CASH_TICKER_MIN_SWING: 300,
 	CASH_TICKER_CYCLES: 2.5,
-	CARD_HEIGHT_RATIO: 1.24,
+	CARD_HEIGHT_RATIO: 1.3,
 	HOW_TO_PLAY_INTRO:
 		"Choose up to six items to buy. A high-value item raises the sell price of all matching items. For example, the most expensive <jewel icon>jewel card sells for $9,600. If you have that card, all your <jewel icon>jewel cards sell for $9,600.",
 	HOW_TO_PLAY_HEAT_LINE: "The higher an item's",
