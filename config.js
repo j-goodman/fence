@@ -130,12 +130,12 @@ window.FENCE_CONFIG = {
 		"Choose up to six items to buy. A high-value item raises the sell price of all matching items. For example, the most expensive <jewel icon>jewel card sells for $9,600. If you have that card, all your <jewel icon>jewel cards sell for $9,600.",
 	HOW_TO_PLAY_HEAT_LINE: "The higher an item's",
 	HOW_TO_PLAY_HEAT_OUTRO: 'the higher the chance it gets confiscated before you can sell it. You can hold items between rounds until the end of the week.',
-	HOW_TO_PLAY_OUTRO: "You're dealt 12 cards per round, with 3 rounds in a week. These are the 36 cards in the deck:",
-	SELL_HEAT_ROLL_MS: 2330,
+	HOW_TO_PLAY_OUTRO: "You can see 12 cards per round, with 3 rounds in a week. These are the 36 cards in the deck:",
+	SELL_HEAT_ROLL_MS: 2300,
 	SELL_HEAT_LAND_MS: 1500,
 	SELL_HEAT_FLASH_MS: 900,
-	SELL_HEAT_RESULT_HOLD_MS: 550,
-	SELL_HEAT_REEL_STAGGER_MS: 178,
-	SELL_HEAT_REEL_OVERSHOOT_MS: 39,
-	SELL_HEAT_REEL_SETTLE_MS: 31
+	SELL_HEAT_RESULT_HOLD_MS: 600,
+	SELL_HEAT_REEL_STAGGER_MS: 220,
+	SELL_HEAT_REEL_OVERSHOOT_MS: 40,
+	SELL_HEAT_REEL_SETTLE_MS: 30
 }

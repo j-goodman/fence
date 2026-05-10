@@ -83,6 +83,14 @@ const state = {
 	buyStage: 1,
 	showHowToPlay: false,
 	openingDealOrder: new Map(),
+	bonusInventory: {
+		bribes: 0,
+		legitimateBusiness: 0,
+		expansion: 0
+	},
+	bribesRemaining: 0,
+	pendingBonusPhase: null,
+	bribePrompt: null,
 	notice: 'Loading the goods...',
 	roundResult: null,
 	headerBottom: 0,
@@ -92,6 +100,42 @@ const state = {
 const tintedTypeImages = new Map()
 const BUY_SKIP_NOTICE_MS = 1000
 const BUY_QUEUE_CARD_SCALE = 1.25
+const BONUS_CARDS = [
+	{
+		key: 'bribes',
+		name: 'Bribes',
+		cost: 5000,
+		description: 'Buy immunity from 1 item confiscation per week.',
+		overheadDelta: 200,
+		quantity: 3,
+		accent: '#9f7c3e',
+		imagePath: 'assets/bribe-card.png',
+		imageKey: 'bonus-bribes'
+	},
+	{
+		key: 'legitimateBusiness',
+		name: 'Legitimate Business',
+		cost: 10000,
+		description: 'Reduce your overhead with legitimate income.',
+		overheadDelta: -300,
+		quantity: 2,
+		accent: '#3f7b65',
+		imagePath: 'assets/legitimate-business-card.png',
+		imageKey: 'bonus-legitimate-business'
+	},
+	{
+		key: 'expansion',
+		name: 'Expansion',
+		cost: 30000,
+		description: 'Expand your premises. See 5 cards at a and hold up to 9.',
+		overheadDelta: 60,
+		quantity: 1,
+		accent: '#4c6f9d',
+		imagePath: 'assets/expansion-card.png',
+		imageKey: 'bonus-expansion'
+	}
+]
+const BONUS_CARD_LOOKUP = new Map(BONUS_CARDS.map(card => [card.key, card]))
 
 const clamp = (value, min, max) => Math.min(max, Math.max(min, value))
 
@@ -106,6 +150,64 @@ const formatCompactMoney = value => {
 }
 
 const footerHeightForPhase = () => (state.phase === 'summary' ? 0 : clamp(state.height * 0.17, 136, 164))
+const bonusOwnedCount = key => state.bonusInventory[key] || 0
+const remainingBonusCopies = key => Math.max(0, (BONUS_CARD_LOOKUP.get(key)?.quantity || 0) - bonusOwnedCount(key))
+const isDebtBonusOffer = card => Boolean(card.bonusCard)
+const currentBuyQueueCapacity = () => 4 + bonusOwnedCount('expansion')
+const currentMaxHandSize = () => MAX_HAND_SIZE + bonusOwnedCount('expansion') * 3
+const currentWeeklyOverhead = () =>
+	SELL_ROUND_OVERHEAD + bonusOwnedCount('bribes') * 200 - bonusOwnedCount('legitimateBusiness') * 300 + bonusOwnedCount('expansion') * 60
+
+const grantBonusOwnership = bonusKey => {
+	state.bonusInventory[bonusKey] = bonusOwnedCount(bonusKey) + 1
+
+	if (bonusKey === 'bribes') {
+		state.bribesRemaining = Math.min(3, state.bribesRemaining + 1)
+	}
+}
+
+const pickDebtBonusOffer = () => {
+	const eligibleCards = BONUS_CARDS.filter(card => remainingBonusCopies(card.key) > 0)
+
+	if (eligibleCards.length === 0) {
+		return null
+	}
+
+	const totalWeight = eligibleCards.reduce((sum, card) => sum + remainingBonusCopies(card.key), 0)
+	let target = Math.random() * totalWeight
+
+	for (const card of eligibleCards) {
+		target -= remainingBonusCopies(card.key)
+
+		if (target <= 0) {
+			return card
+		}
+	}
+
+	return eligibleCards.at(-1) || null
+}
+
+const maybeInjectDebtBonusOffer = deck => {
+	if (state.savings >= 0 || Math.random() >= 0.75) {
+		return deck
+	}
+
+	const bonusCard = pickDebtBonusOffer()
+
+	if (!bonusCard || deck.length === 0) {
+		return deck
+	}
+
+	const replaceIndex = Math.floor(Math.random() * deck.length)
+	const replacedCard = deck[replaceIndex]
+	const nextDeck = [...deck]
+	nextDeck[replaceIndex] = {
+		id: replacedCard.id,
+		bonusCard
+	}
+
+	return nextDeck
+}
 
 const stageLabel = stage => {
 	if (stage === 1) {
@@ -126,6 +228,7 @@ const stageLabel = stage => {
 const buyRoundTitle = stage => `${stageLabel(stage)} buy round`
 
 const sellRoundTitle = stage => (stage === TOTAL_BUY_STAGES ? 'Final sell round' : `${stageLabel(stage)} sell round`)
+const bonusRoundTitle = () => 'Bonus Cards'
 
 const deckSliceLabel = stage => {
 	if (stage === 1) {
@@ -164,7 +267,7 @@ const canAffordRemainingStageCards = () => {
 
 const cardsSeenInStage = () => Math.max(0, state.dealCursor - currentStageStart())
 
-const buildRoundDeck = () => buildDeck({ cardTypes: CARD_TYPES, heatValues: HEAT_VALUES })
+const buildRoundDeck = () => maybeInjectDebtBonusOffer(buildDeck({ cardTypes: CARD_TYPES, heatValues: HEAT_VALUES }))
 
 const highestRankForType = typeKey => highestRankInHand({ hand: state.hand, typeKey })
 
@@ -523,6 +626,7 @@ const finalizeSellHeatCheck = () => {
 		setNotice('all your items were confiscated')
 	}
 
+	state.bribePrompt = null
 	state.sellHeatCheck = null
 	lockSellPhaseRanks()
 }
@@ -561,6 +665,19 @@ const updateSellHeatCheck = deltaMs => {
 			return false
 		}
 
+		if (state.bribesRemaining > 0) {
+			state.bribePrompt = {
+				confiscatedCount: state.sellHeatCheck.confiscatedIds.length,
+				result: state.sellHeatCheck.result
+			}
+			state.sellHeatCheck = {
+				...state.sellHeatCheck,
+				stage: 'prompt',
+				elapsed: 0
+			}
+			return false
+		}
+
 		state.sellHeatCheck = {
 			...state.sellHeatCheck,
 			stage: 'flash',
@@ -568,6 +685,10 @@ const updateSellHeatCheck = deltaMs => {
 		}
 
 		return true
+	}
+
+	if (state.sellHeatCheck.stage === 'prompt') {
+		return false
 	}
 
 	if (state.sellHeatCheck.stage === 'flash') {
@@ -586,19 +707,19 @@ const updateSellHeatCheck = deltaMs => {
 const applySellRoundTransition = transition => {
 	state.sellRoundTransition = null
 
-	if (transition.nextPhase === 'buy') {
-		resetCardMotion()
-		state.buyStage += 1
-		state.phase = `buy-${state.buyStage}`
-		state.queue = []
-		state.sellPhaseRanks.clear()
-		state.sellHeatCheck = null
-		refillQueue()
-		setNotice(`${buyRoundTitle(state.buyStage)}. ${deckSliceLabel(state.buyStage)} is on the table.`)
+	if (transition.nextPhase === 'summary') {
+		openBonusShop(transition.nextPhase)
 		return
 	}
 
-	finalizeRound()
+	resetCardMotion()
+	state.buyStage += 1
+	state.phase = `buy-${state.buyStage}`
+	state.queue = []
+	state.sellPhaseRanks.clear()
+	state.sellHeatCheck = null
+	refillQueue()
+	setNotice(`${buyRoundTitle(state.buyStage)}. ${deckSliceLabel(state.buyStage)} is on the table.`)
 }
 
 const applyBuySkipTransition = transition => {
@@ -825,7 +946,7 @@ const fillRoundedRect = (x, y, width, height, radius, fillStyle) => {
 	ctx.fill()
 }
 
-const drawWrappedText = (text, x, y, maxWidth, lineHeight, fillStyle = '#231b16') => {
+const wrapTextLines = (text, maxWidth) => {
 	const words = text.split(' ')
 	const lines = []
 	let current = ''
@@ -845,6 +966,12 @@ const drawWrappedText = (text, x, y, maxWidth, lineHeight, fillStyle = '#231b16'
 	if (current) {
 		lines.push(current)
 	}
+
+	return lines
+}
+
+const drawWrappedText = (text, x, y, maxWidth, lineHeight, fillStyle = '#231b16') => {
+	const lines = wrapTextLines(text, maxWidth)
 
 	ctx.fillStyle = fillStyle
 	lines.forEach((line, index) => {
@@ -935,7 +1062,13 @@ const currentStageLimit = () => state.buyStage * BUY_STAGE_SIZE
 
 const loadCardImages = async () => {
 	await Promise.all(
-		[...CARD_TYPES, { key: 'question-mark', imagePath: 'assets/question-mark.png' }, { key: 'fire', imagePath: 'assets/fire.png' }].map(
+		[
+			...CARD_TYPES,
+			...BONUS_CARDS.map(card => ({ key: card.imageKey, imagePath: card.imagePath })),
+			{ key: 'question-mark', imagePath: 'assets/question-mark.png' },
+			{ key: 'fire', imagePath: 'assets/fire.png' },
+			{ key: 'bribe-icon', imagePath: 'assets/bribe-icon.png' }
+		].map(
 			type =>
 				new Promise(resolve => {
 					const image = new Image()
@@ -954,10 +1087,44 @@ const loadCardImages = async () => {
 }
 
 const refillQueue = () => {
-	while (state.queue.length < 4 && state.dealCursor < currentStageLimit() && state.dealCursor < state.deck.length) {
+	while (state.queue.length < currentBuyQueueCapacity() && state.dealCursor < currentStageLimit() && state.dealCursor < state.deck.length) {
 		state.queue.push(state.deck[state.dealCursor])
 		state.dealCursor += 1
 	}
+}
+
+const openBonusShop = nextPhase => {
+	if (nextPhase === 'summary' && !state.roundResult) {
+		finalizeRound()
+	}
+
+	resetCardMotion()
+	state.sellHeatCheck = null
+	state.bribePrompt = null
+	state.pendingBonusPhase = nextPhase
+	state.phase = `bonus-${state.buyStage}`
+	state.showHowToPlay = false
+	setNotice('Review the bonus cards. Buy any you want, or continue.')
+}
+
+const continueFromBonusShop = () => {
+	const nextPhase = state.pendingBonusPhase
+	state.pendingBonusPhase = null
+
+	if (nextPhase === 'buy') {
+		resetCardMotion()
+		state.buyStage += 1
+		state.phase = `buy-${state.buyStage}`
+		state.queue = []
+		state.sellPhaseRanks.clear()
+		state.sellHeatCheck = null
+		state.bribePrompt = null
+		refillQueue()
+		setNotice(`${buyRoundTitle(state.buyStage)}. ${deckSliceLabel(state.buyStage)} is on the table.`)
+		return
+	}
+
+	state.phase = 'summary'
 }
 
 const startRound = () => {
@@ -972,8 +1139,11 @@ const startRound = () => {
 	state.sellPhaseRanks.clear()
 	state.showHowToPlay = false
 	state.buyStage = 1
+	state.pendingBonusPhase = null
+	state.bribePrompt = null
+	state.bribesRemaining = bonusOwnedCount('bribes')
 	state.roundResult = null
-	setNotice('Pick your first four offers. You can carry up to 6 cards across the full week.')
+	setNotice(`Pick your first ${currentBuyQueueCapacity()} offers. You can carry up to ${currentMaxHandSize()} cards across the full week.`)
 	refillQueue()
 	state.queue.forEach((card, index) => {
 		state.openingDealOrder.set(card.id, index)
@@ -991,6 +1161,7 @@ const startSellHeatCheck = () => {
 	state.queueRenderSlots.clear()
 	state.openingDealOrder.clear()
 	state.deckRect = null
+	state.bribePrompt = null
 	const result = Math.floor(Math.random() * 100)
 	const confiscatedIds = state.hand.filter(card => result < card.heat).map(card => card.id)
 	state.sellHeatCheck = {
@@ -1002,6 +1173,55 @@ const startSellHeatCheck = () => {
 		reels: [createHeatReel(Math.floor(result / 10), 0), createHeatReel(result % 10, 1)]
 	}
 	startAnimationLoop()
+}
+
+const spendBribeOnHeatRoll = () => {
+	if (!state.sellHeatCheck || state.sellHeatCheck.stage !== 'prompt' || state.bribesRemaining <= 0) {
+		return
+	}
+
+	state.bribesRemaining -= 1
+	state.bribePrompt = null
+	state.sellHeatCheck = null
+	setNotice('Spent a bribe for a reroll.')
+	startSellHeatCheck()
+}
+
+const declineBribeOnHeatRoll = () => {
+	if (!state.sellHeatCheck || state.sellHeatCheck.stage !== 'prompt') {
+		return
+	}
+
+	state.bribePrompt = null
+	state.sellHeatCheck = {
+		...state.sellHeatCheck,
+		stage: 'flash',
+		elapsed: 0
+	}
+	startAnimationLoop()
+}
+
+const buyBonusCard = bonusKey => {
+	const bonusCard = BONUS_CARD_LOOKUP.get(bonusKey)
+
+	if (!bonusCard) {
+		return
+	}
+
+	if (remainingBonusCopies(bonusKey) === 0) {
+		setNotice(`${bonusCard.name} is sold out.`)
+		return
+	}
+
+	if (state.savings < bonusCard.cost) {
+		setNotice(`You need ${formatMoney(bonusCard.cost)} in savings to buy ${bonusCard.name.toLowerCase()}.`)
+		return
+	}
+
+	state.savings -= bonusCard.cost
+	grantBonusOwnership(bonusKey)
+
+	setNotice(`Bought ${bonusCard.name} for ${formatMoney(bonusCard.cost)}.`)
 }
 const removeCardFromCollection = (collection, cardId) => {
 	const index = collection.findIndex(card => card.id === cardId)
@@ -1045,13 +1265,18 @@ const maybeAdvanceFromBuyPhase = () => {
 		return
 	}
 
+	if (state.buyStage === TOTAL_BUY_STAGES) {
+		advanceToSellPhase('Final sell round. Anything left in your hand when the week closes is sold automatically.')
+		return
+	}
+
 	state.buySkipTransition = {
 		elapsed: 0,
 		duration: BUY_SKIP_NOTICE_MS,
 		message:
 			state.buyStage < TOTAL_BUY_STAGES
 				? `${sellRoundTitle(state.buyStage)}. You can't afford any more offers, so the rest of this buy round is skipped.`
-				: 'Final sell round. You can no longer afford the remaining offers, so the week moves to the last sell round.'
+				: ''
 	}
 	startAnimationLoop()
 }
@@ -1064,15 +1289,19 @@ const buyCard = cardId => {
 		return
 	}
 
-	if (state.hand.length >= MAX_HAND_SIZE) {
-		setNotice('Your hand is full. Reject something from the queue instead.')
+	if (!isDebtBonusOffer(card) && state.hand.length >= currentMaxHandSize()) {
+		setNotice(`Your hand is full. You can hold up to ${currentMaxHandSize()} cards.`)
 		return
 	}
 
 	const buyPrice = buyPriceForCard(card)
 
 	if (state.cash < buyPrice) {
-		setNotice(`You need ${formatMoney(buyPrice)} to buy that ${card.type.singular.toLowerCase()}.`)
+		setNotice(
+			isDebtBonusOffer(card)
+				? `You need ${formatMoney(buyPrice)} to buy ${card.bonusCard.name.toLowerCase()}.`
+				: `You need ${formatMoney(buyPrice)} to buy that ${card.type.singular.toLowerCase()}.`
+		)
 		return
 	}
 
@@ -1080,6 +1309,13 @@ const buyCard = cardId => {
 	const boughtCard = removeCardFromCollection(state.queue, cardId)
 
 	if (!boughtCard) {
+		return
+	}
+
+	if (isDebtBonusOffer(boughtCard)) {
+		grantBonusOwnership(boughtCard.bonusCard.key)
+		setNotice(`Bought ${boughtCard.bonusCard.name} for ${formatMoney(buyPrice)}.`)
+		maybeAdvanceFromBuyPhase()
 		return
 	}
 
@@ -1097,7 +1333,7 @@ const rejectCard = cardId => {
 		return
 	}
 
-	setNotice(`Rejected ${card.type.singular.toLowerCase()} ${card.rank}.`)
+	setNotice(isDebtBonusOffer(card) ? `Rejected ${card.bonusCard.name.toLowerCase()}.` : `Rejected ${card.type.singular.toLowerCase()} ${card.rank}.`)
 	maybeAdvanceFromBuyPhase()
 }
 
@@ -1129,6 +1365,7 @@ const sellAllCards = () => {
 }
 
 const savingsLabel = () => (state.savings < 0 ? 'Debt' : 'Savings')
+const savingsDisplayValue = () => (state.savings < 0 ? `-${formatMoney(Math.abs(state.savings))}` : formatMoney(state.savings))
 
 const finalizeRound = () => {
 	resetCardMotion()
@@ -1164,14 +1401,20 @@ const finalizeRound = () => {
 }
 
 const endSellPhase = () => {
-	const overheadPaid = Math.min(state.cash, SELL_ROUND_OVERHEAD)
-	setCashValue(state.cash - overheadPaid)
+	const weeklyOverhead = currentWeeklyOverhead()
+	const overheadPaid = weeklyOverhead > 0 ? Math.min(state.cash, weeklyOverhead) : 0
+	const legitimateIncome = weeklyOverhead < 0 ? -weeklyOverhead : 0
+	setCashValue(state.cash - overheadPaid + legitimateIncome)
 	state.sellRoundTransition = {
 		elapsed: 0,
 		duration: SELL_ROUND_OVERHEAD_NOTICE_MS,
 		overheadPaid,
+		legitimateIncome,
 		nextPhase: state.buyStage < TOTAL_BUY_STAGES ? 'buy' : 'summary',
-		message: `Paid ${formatMoney(overheadPaid)} in overhead.`
+		message:
+			legitimateIncome > 0
+				? `Earned ${formatMoney(legitimateIncome)} in legitimate income.`
+				: `Paid ${formatMoney(overheadPaid)} in overhead.`
 	}
 	startAnimationLoop()
 }
@@ -1287,32 +1530,52 @@ const drawBackground = () => {
 	ctx.fillRect(0, 0, state.width, state.height)
 }
 
-const drawCardKey = () => {
+const getTopRightHudLayout = () => {
 	const padding = clamp(state.width * 0.028, 14, 34)
 	const top = clamp(state.height * 0.08, 30, 52)
 	const bottom = state.height - state.footerHeight - padding
 	const availableHeight = bottom - top
 	const rowGap = 8
 	const rowHeight = Math.max(22, Math.floor((availableHeight - rowGap * (CARD_TYPES.length - 1)) / CARD_TYPES.length))
-	const iconSize = Math.min(30, rowHeight)
+	const baseKeyIconSize = Math.min(30, rowHeight)
+	const keyIconSize = baseKeyIconSize * 2.35
+	const keyLabelFontSize = Math.max(14, baseKeyIconSize * 0.6)
 	const numberGap = 10
 	const maxCountWidth = 24
-	const columnWidth = iconSize + numberGap + maxCountWidth
-	const startX = state.width - padding - columnWidth
+	const columnWidth = keyIconSize + numberGap + maxCountWidth
+	const keyStartX = state.width - padding - columnWidth
+	const keyVisible = state.width >= 560 && availableHeight >= 220 && keyStartX >= state.width * 0.78
 
-	if (state.width < 560 || availableHeight < 220 || startX < state.width * 0.78) {
+	return {
+		padding,
+		top,
+		availableHeight,
+		rowGap,
+		rowHeight,
+		keyIconSize,
+		keyLabelFontSize,
+		numberGap,
+		keyStartX,
+		keyVisible
+	}
+}
+
+const drawCardKey = () => {
+	const topRightHud = getTopRightHudLayout()
+
+	if (!topRightHud.keyVisible) {
 		return
 	}
 
 	CARD_TYPES.forEach((type, index) => {
-		const y = top + index * (rowHeight + rowGap)
-		drawTypeImage(type, startX, y, iconSize)
+		const y = topRightHud.top + index * (topRightHud.rowHeight + topRightHud.rowGap)
+		drawTypeImage(type, topRightHud.keyStartX, y, topRightHud.keyIconSize)
 
 		ctx.fillStyle = THEME.textSoft
 		ctx.textAlign = 'left'
 		ctx.textBaseline = 'middle'
-		ctx.font = `700 ${Math.max(14, iconSize * 0.6)}px ${mainFont}`
-		ctx.fillText(String(type.count), startX + iconSize + numberGap, y + iconSize / 2)
+		ctx.font = `700 ${topRightHud.keyLabelFontSize}px ${mainFont}`
+		ctx.fillText(String(type.count), topRightHud.keyStartX + topRightHud.keyIconSize + topRightHud.numberGap, y + topRightHud.keyIconSize / 2)
 	})
 }
 
@@ -1362,8 +1625,8 @@ const drawFooter = (title, detail) => {
 	const stats = [
 		{ label: 'Cash', value: formatMoney(state.displayedCash) },
 		{ label: 'Credit', value: formatMoney(state.creditLimit) },
-		{ label: savingsLabel(), value: formatMoney(state.savings) },
-		{ label: 'Items in hand', value: `${state.hand.length}/${MAX_HAND_SIZE}` }
+		{ label: savingsLabel(), value: savingsDisplayValue() },
+		{ label: 'Items in hand', value: `${state.hand.length}/${currentMaxHandSize()}` }
 	]
 
 	stats.forEach((label, index) => {
@@ -1371,15 +1634,16 @@ const drawFooter = (title, detail) => {
 		const row = Math.floor(index / 2)
 		const statX = statStartX + column * (statWidth + statGap)
 		const statY = statStartY + row * (statHeight + statGap)
+		const highlightSavings = state.phase.startsWith('bonus') && index === 2
 
-		fillRoundedRect(statX, statY, statWidth, statHeight, 14, THEME.panelSoft)
-		ctx.fillStyle = THEME.textMuted
+		fillRoundedRect(statX, statY, statWidth, statHeight, 14, highlightSavings ? THEME.highlightMuted : THEME.panelSoft)
+		ctx.fillStyle = highlightSavings ? THEME.highlightSoft : THEME.textMuted
 		ctx.textAlign = 'left'
 		ctx.textBaseline = 'alphabetic'
 		ctx.font = `600 11px ${mainFont}`
 		ctx.fillText(label.label, statX + 14, statY + 16)
 
-		ctx.fillStyle = index % 2 === 0 ? THEME.text : THEME.highlight
+		ctx.fillStyle = highlightSavings ? THEME.highlight : index % 2 === 0 ? THEME.text : THEME.highlight
 		let valueFontSize = index === 0 ? 24 : 16
 		const valueMaxWidth = statWidth - 28
 
@@ -1392,21 +1656,51 @@ const drawFooter = (title, detail) => {
 
 		ctx.fillText(label.value, statX + 14, statY + (index === 0 ? 39 : 34))
 	})
+}
 
+const drawBribeHud = () => {
+	if (state.bribesRemaining <= 0) {
+		return
+	}
+
+	const icon = state.images.get('bribe-icon')
+	const topRightHud = getTopRightHudLayout()
+	const iconSize = 72
+	const gap = 12
+	const totalWidth = state.bribesRemaining * iconSize + Math.max(0, state.bribesRemaining - 1) * gap
+	const startX = topRightHud.keyVisible
+		? topRightHud.keyStartX - 18 - totalWidth
+		: state.width - clamp(state.width * 0.024, 16, 28) - totalWidth
+	const y = topRightHud.keyVisible ? Math.max(16, topRightHud.top - Math.round((iconSize - topRightHud.keyIconSize) / 2)) : 16
+
+	for (let index = 0; index < state.bribesRemaining; index += 1) {
+		const x = startX + index * (iconSize + gap)
+
+		if (icon) {
+			ctx.drawImage(icon, x, y, iconSize, iconSize)
+			continue
+		}
+
+		ctx.fillStyle = '#b99448'
+		ctx.fillRect(x, y, iconSize, iconSize)
+	}
 }
 
 const drawHowToPlayOverlay = () => {
+	const modalBottom = state.height - state.footerHeight
+	const usableHeight = modalBottom
 	const overlayWidth = Math.min(760, state.width - 28)
-	const overlayHeight = Math.min(540, state.height - 12)
+	const overlayHeight = Math.min(540, usableHeight - 12)
 	const x = (state.width - overlayWidth) / 2
-	const y = (state.height - overlayHeight) / 2
+	const y = (usableHeight - overlayHeight) / 2
 	const innerPadding = 26
 	const contentWidth = overlayWidth - innerPadding * 2
 	const chipGap = 8
-	const iconSize = 43
-	const chipHeight = iconSize + 24
+	const baseIconSize = 43
+	const iconSize = baseIconSize * 1.6
+	const chipHeight = baseIconSize + 24
 	const chipWidth = Math.max(132, Math.floor((contentWidth - chipGap) / 2))
-	const chipTextX = 12 + iconSize + 12
+	const chipTextX = 12 + 43 + 12 + 20
 
 	ctx.fillStyle = 'rgba(7, 10, 13, 0.82)'
 	ctx.fillRect(0, 0, state.width, state.height)
@@ -1481,6 +1775,7 @@ const drawHowToPlayOverlay = () => {
 		const row = Math.floor(index / 2)
 		const chipX = x + innerPadding + column * (chipWidth + chipGap)
 		const chipY = chipsTop + row * (chipHeight + chipGap)
+		const deckListLabel = type.key === 'silverware' && type.count === 1 ? '1 silverware set' : `${type.count} ${type.plural.toLowerCase()}`
 
 		fillRoundedRect(chipX, chipY, chipWidth, chipHeight, 12, THEME.panelSoft)
 		drawTypeImage(type, chipX + 12, chipY + (chipHeight - iconSize) / 2, iconSize)
@@ -1489,7 +1784,7 @@ const drawHowToPlayOverlay = () => {
 		ctx.textAlign = 'left'
 		ctx.textBaseline = 'middle'
 		ctx.font = `600 21px ${mainFont}`
-		ctx.fillText(`${type.count} ${type.plural.toLowerCase()}`, chipX + chipTextX, chipY + chipHeight / 2)
+		ctx.fillText(deckListLabel, chipX + chipTextX, chipY + chipHeight / 2)
 	})
 
 	registerButton({
@@ -1504,7 +1799,55 @@ const drawHowToPlayOverlay = () => {
 	})
 }
 
+const drawDebtBonusOfferCard = (card, x, y, size) => {
+	const bonusCard = card.bonusCard
+	const cardHeight = cardHeightFor(size)
+	const outlineWidth = Math.max(3, size * 0.034)
+	const image = state.images.get(bonusCard.imageKey)
+	const titleLines = bonusCard.key === 'legitimateBusiness' ? ['Legitimate', 'Business'] : [bonusCard.name]
+	const titleSize = titleLines.length > 1 ? Math.max(10, size * 0.082) : Math.max(11, size * 0.092)
+	const titleLineHeight = titleLines.length > 1 ? titleSize - 1 : titleSize
+	const titleBlockHeight = titleLines.length * titleLineHeight
+	const imageSize = size * 0.72 * 1.2
+	const descriptionSize = Math.max(8, size * 0.058)
+	const innerX = x + 10
+	const innerWidth = size - 20
+	const titleTop = y + 22
+	const imageY = y + 18 + titleBlockHeight
+
+	ctx.fillStyle = THEME.card
+	ctx.fillRect(x, y, size, cardHeight)
+	ctx.lineWidth = outlineWidth
+	ctx.strokeStyle = bonusCard.accent
+	ctx.strokeRect(x + outlineWidth / 2, y + outlineWidth / 2, size - outlineWidth, cardHeight - outlineWidth)
+
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'alphabetic'
+
+	ctx.fillStyle = THEME.cardText
+	ctx.font = `700 ${titleSize}px ${mainFont}`
+	titleLines.forEach((line, index) => {
+		ctx.fillText(line, x + size / 2, titleTop + titleSize + index * titleLineHeight)
+	})
+
+	if (image) {
+		ctx.drawImage(image, x + (size - imageSize) / 2, imageY, imageSize, imageSize)
+	}
+
+	ctx.fillStyle = THEME.cardTextSoft
+	ctx.font = `600 ${descriptionSize}px ${mainFont}`
+	const descriptionLines = wrapTextLines(bonusCard.description, innerWidth)
+	descriptionLines.slice(0, 3).forEach((line, index) => {
+		ctx.fillText(line, x + size / 2, y + cardHeight - 28 - (descriptionLines.slice(0, 3).length - 1 - index) * 11)
+	})
+}
+
 const drawCardFace = (card, x, y, size, footerText, footerLabel = 'sell for') => {
+	if (isDebtBonusOffer(card)) {
+		drawDebtBonusOfferCard(card, x, y, size)
+		return
+	}
+
 	const cardHeight = cardHeightFor(size)
 	const outlineWidth = Math.max(3, size * 0.034)
 	const compactCard = size < 76
@@ -1535,7 +1878,7 @@ const drawCardFace = (card, x, y, size, footerText, footerLabel = 'sell for') =>
 	ctx.restore()
 
 	const image = getTypeImageAsset(card.type)
-	const imageSize = size * (compactCard ? 0.49 : 0.66)
+	const imageSize = size * (compactCard ? 0.39 : 0.66)
 	const imageY = y + cardHeight * (compactCard ? 0.22 : 0.17)
 
 	if (image) {
@@ -1549,12 +1892,12 @@ const drawCardFace = (card, x, y, size, footerText, footerLabel = 'sell for') =>
 	}
 
 	if (footerText) {
-		const footerHeight = compactCard ? Math.max(34, size * 0.29) : Math.max(50, size * 0.36)
+		const footerHeight = compactCard ? Math.max(29, size * 0.25) : Math.max(50, size * 0.36)
 		const footerY = y + cardHeight - footerHeight - (compactCard ? 5 : 10)
-		const footerLabelSize = compactCard ? Math.max(7, size * 0.07) : Math.max(10, size * 0.08)
-		const footerPriceSize = compactCard ? Math.max(10, size * 0.095) : Math.max(14, size * 0.125)
-		const footerTopPadding = compactCard ? 5 : 8
-		const footerGap = compactCard ? 4 : 7
+		const footerLabelSize = compactCard ? Math.max(6, size * 0.056) : Math.max(10, size * 0.08)
+		const footerPriceSize = compactCard ? Math.max(8, size * 0.078) : Math.max(14, size * 0.125)
+		const footerTopPadding = compactCard ? 4 : 8
+		const footerGap = compactCard ? 1 : 7
 
 		ctx.textAlign = 'center'
 		ctx.textBaseline = 'top'
@@ -1760,7 +2103,7 @@ const drawHandStrip = startY => {
 const getBuyRowLayout = (startY, count) => {
 	const padding = clamp(state.width * 0.032, 16, 38)
 	const gap = clamp(state.width * 0.012, 6, 14)
-	const totalSlots = 5
+	const totalSlots = currentBuyQueueCapacity() + 1
 	let size = Math.round(152 * BUY_QUEUE_CARD_SCALE)
 	const maxWidth = state.width - padding * 2
 
@@ -1786,7 +2129,7 @@ const getBuyRowLayout = (startY, count) => {
 	return {
 		positions,
 		deckRect: {
-			x: startX + 4 * (size + gap),
+			x: startX + currentBuyQueueCapacity() * (size + gap),
 			y: startY,
 			size
 		},
@@ -1821,7 +2164,7 @@ const drawMovingHandCards = () => {
 }
 
 const drawBuyScene = () => {
-	const previewGrid = getBuyRowLayout(0, state.queue.length || 4)
+	const previewGrid = getBuyRowLayout(0, state.queue.length || currentBuyQueueCapacity())
 	const handTop = previewGrid.height + 20
 	const handContentHeight = layoutGrid({
 		count: Math.max(state.hand.length, 1),
@@ -1859,10 +2202,11 @@ const drawBuyScene = () => {
 		const interactionReady = motion?.kind === 'from-deck' ? entryProgress >= 0.98 : motion?.kind === 'queue-shift' ? entryProgress >= 0.9 : true
 		const buyPrice = buyPriceForCard(card)
 		const marketValue = marketValueForCard(card)
+		const bonusOffer = isDebtBonusOffer(card)
 		const canAfford = state.cash >= buyPrice
-		const canCarry = state.hand.length < MAX_HAND_SIZE
-		const buyEnabled = canAfford && canCarry
-		const footerText = motion?.kind === 'from-deck' && getMotionProgress(motion) < 0.5 ? null : formatMoney(marketValue)
+		const canCarry = state.hand.length < currentMaxHandSize()
+		const buyEnabled = canAfford && (bonusOffer || canCarry)
+		const footerText = bonusOffer || (motion?.kind === 'from-deck' && getMotionProgress(motion) < 0.5) ? null : formatMoney(marketValue)
 		const compactLabels = currentPosition.size < 72
 		const buyLabel = `buy for\n${compactLabels ? formatCompactMoney(buyPrice) : formatMoney(buyPrice)}`
 		const rejectLabel = compactLabels ? 'No' : 'Reject'
@@ -1917,6 +2261,162 @@ const drawBuyScene = () => {
 		buyRoundTitle(state.buyStage),
 		`${state.notice} Seen ${cardsSeenInStage()}/${BUY_STAGE_SIZE} cards from ${deckSliceLabel(state.buyStage)}.`
 	)
+}
+
+const drawBonusCardFace = (bonusCard, x, y, width) => {
+	const remaining = remainingBonusCopies(bonusCard.key)
+	const stackDepth = Math.max(1, Math.min(remaining, bonusCard.quantity))
+	const stackOffsetX = 16
+	const stackOffsetY = 10
+	const height = Math.round(width * 1.54)
+	const baseX = x + (stackDepth - 1) * stackOffsetX
+	const foregroundX = x
+	const image = state.images.get(bonusCard.imageKey)
+	const cardCenterX = foregroundX + width / 2
+	const innerX = foregroundX + 16
+	const innerWidth = width - 32
+	const titleLines = bonusCard.key === 'legitimateBusiness' ? ['Legitimate', 'Business'] : [bonusCard.name]
+	const titleSize = titleLines.length > 1 ? 16 : 18
+	const titleLineHeight = titleLines.length > 1 ? 16 : 18
+	const titleBlockHeight = titleLines.length * titleLineHeight
+	const bodySize = 11
+	const bodyLineHeight = 15
+	const metaLineHeight = 16
+	const costLine = `Cost: ${formatMoney(bonusCard.cost)}`
+	const overheadLine = `${bonusCard.overheadDelta < 0 ? '-' : '+'}${formatMoney(Math.abs(bonusCard.overheadDelta))} weekly overhead`
+
+	ctx.font = `600 ${bodySize}px ${mainFont}`
+	const descriptionLines = wrapTextLines(bonusCard.description, innerWidth)
+	const descriptionHeight = descriptionLines.length * bodyLineHeight
+	const imageSize = clamp(Math.min(width * 0.624, height - descriptionHeight - metaLineHeight * 2 - 112), 74, 134)
+	const contentHeight = titleBlockHeight + 22 + imageSize + 18 + descriptionHeight + 12 + metaLineHeight * 2
+	const contentTop = y + Math.max(28, Math.floor((height - contentHeight) / 2))
+	const titleY = contentTop + titleSize
+	const ruleY = contentTop + titleBlockHeight + 10
+	const imageTop = ruleY + 12
+	const descriptionTop = imageTop + imageSize + 18
+	const costY = descriptionTop + descriptionHeight + 12
+	const overheadY = costY + metaLineHeight
+
+	const drawCardLayer = (layerX, layerY, rotation) => {
+		ctx.save()
+		ctx.translate(layerX + width / 2, layerY + height / 2)
+		ctx.rotate(rotation)
+		ctx.translate(-width / 2, -height / 2)
+		ctx.fillStyle = THEME.card
+		ctx.fillRect(0, 0, width, height)
+		ctx.lineWidth = Math.max(3, width * 0.028)
+		ctx.strokeStyle = bonusCard.accent
+		ctx.strokeRect(1.5, 1.5, width - 3, height - 3)
+		ctx.restore()
+	}
+
+	for (let index = stackDepth - 1; index >= 0; index -= 1) {
+		const layerX = x + index * stackOffsetX
+		const layerY = y - index * stackOffsetY
+		drawCardLayer(layerX, layerY, index * 0.026)
+	}
+
+	ctx.fillStyle = THEME.cardText
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'alphabetic'
+	ctx.font = `700 ${titleSize}px ${mainFont}`
+	titleLines.forEach((line, index) => {
+		ctx.fillText(line, cardCenterX, titleY + index * titleLineHeight)
+	})
+
+	ctx.strokeStyle = bonusCard.accent
+	ctx.lineWidth = 2
+	ctx.beginPath()
+	ctx.moveTo(foregroundX + 18, ruleY)
+	ctx.lineTo(foregroundX + width - 18, ruleY)
+	ctx.stroke()
+
+	if (image) {
+		ctx.drawImage(image, foregroundX + (width - imageSize) / 2, imageTop, imageSize, imageSize)
+	}
+
+	ctx.fillStyle = THEME.cardText
+	ctx.textAlign = 'left'
+	ctx.font = `600 ${bodySize}px ${mainFont}`
+	descriptionLines.forEach((line, index) => {
+		ctx.fillText(line, innerX, descriptionTop + index * bodyLineHeight)
+	})
+
+	ctx.fillStyle = THEME.cardTextSoft
+	ctx.font = `600 ${bodySize}px ${mainFont}`
+	ctx.fillText(costLine, innerX, costY)
+	ctx.fillStyle = bonusCard.overheadDelta <= 0 ? '#2b6654' : '#7a523d'
+	ctx.fillText(overheadLine, innerX, overheadY)
+
+	return { x: foregroundX, y, width, height }
+}
+
+const drawBonusScene = () => {
+	const padding = clamp(state.width * 0.05, 24, 54)
+	const gap = clamp(state.width * 0.045, 32, 60)
+	const availableWidth = state.width - padding * 2 - gap * (BONUS_CARDS.length - 1)
+	const cardWidth = clamp(Math.floor(availableWidth / BONUS_CARDS.length), 168, 214)
+	const cardHeight = Math.round(cardWidth * 1.54)
+	const totalWidth = BONUS_CARDS.length * cardWidth + gap * (BONUS_CARDS.length - 1)
+	const startX = (state.width - totalWidth) / 2
+	const headingY = clamp(state.height * 0.11, 68, 92)
+	const subtitleY = headingY + 26
+	const stackRise = 20
+	const buttonGap = 18
+	const buttonHeight = 40
+	const subtitle = state.savings > 0 ? 'Use your savings to buy bonuses.' : 'Earn a profit to buy bonuses.'
+	const minSectionTop = subtitleY + 40 + stackRise
+	const maxSectionTop = state.height - state.footerHeight - buttonHeight - buttonGap - cardHeight - 34
+	const sectionTop = clamp(Math.round((minSectionTop + maxSectionTop) / 2) - 40, minSectionTop, maxSectionTop)
+
+	ctx.textAlign = 'center'
+	ctx.textBaseline = 'alphabetic'
+	ctx.fillStyle = THEME.highlight
+	ctx.font = `700 24px ${mainFont}`
+	ctx.fillText(bonusRoundTitle(), state.width / 2, headingY)
+	ctx.fillStyle = THEME.textSoft
+	ctx.font = `500 14px ${mainFont}`
+	ctx.fillText(subtitle, state.width / 2, subtitleY)
+
+	BONUS_CARDS.forEach((bonusCard, index) => {
+		const x = startX + index * (cardWidth + gap)
+		const cardFrame = drawBonusCardFace(bonusCard, x, sectionTop, cardWidth)
+		const remaining = remainingBonusCopies(bonusCard.key)
+		const canBuy = remaining > 0 && state.savings >= bonusCard.cost
+		const label = remaining === 0 ? 'Sold out' : `Buy for ${formatCompactMoney(bonusCard.cost)}`
+
+		registerButton({
+			id: `bonus-${bonusCard.key}`,
+			label,
+			x: cardFrame.x,
+			y: cardFrame.y + cardFrame.height + buttonGap,
+			width: cardFrame.width,
+			height: buttonHeight,
+			tone: 'primary',
+			enabled: canBuy,
+			action: 'buy-bonus',
+			payload: bonusCard.key
+		})
+	})
+
+	registerButton({
+		id: 'continue-bonus',
+		label: 'Finish the week',
+		x: (state.width - 280) / 2,
+		y: state.height - state.footerHeight - 74,
+		width: 280,
+		height: 40,
+		tone: 'primary',
+		action: 'continue-bonus'
+	})
+
+	const nextSellRoundDetail =
+		currentWeeklyOverhead() < 0
+			? `Legitimate income next sell round: ${formatMoney(-currentWeeklyOverhead())}.`
+			: `Overhead next sell round: ${formatMoney(currentWeeklyOverhead())}.`
+
+	drawFooter(bonusRoundTitle(), `${state.notice} ${nextSellRoundDetail}`)
 }
 
 const drawSellScene = () => {
@@ -2026,12 +2526,60 @@ const drawSellScene = () => {
 
 	drawFooter(
 		sellRoundTitle(state.buyStage),
-		`${state.notice} Sell low ranks before your top card if you want the higher multiplier to stay active.`
+		state.notice
 	)
 
 	if (state.sellHeatCheck) {
 		drawHeatRollOverlay()
 	}
+}
+
+const drawBribePromptOverlay = () => {
+	if (!state.sellHeatCheck || state.sellHeatCheck.stage !== 'prompt' || !state.bribePrompt) {
+		return
+	}
+
+	const overlayWidth = Math.min(540, state.width - 28)
+	const overlayHeight = 128
+	const x = (state.width - overlayWidth) / 2
+	const y = (state.height - overlayHeight) / 2
+	const icon = state.images.get('bribe-icon')
+
+	ctx.fillStyle = 'rgba(7, 10, 13, 0.62)'
+	ctx.fillRect(0, 0, state.width, state.height)
+	fillRoundedRect(x, y, overlayWidth, overlayHeight, 18, THEME.panel)
+
+	if (icon) {
+		ctx.drawImage(icon, x + 24, y + 24, 34, 34)
+	}
+
+	ctx.textAlign = 'left'
+	ctx.textBaseline = 'alphabetic'
+	ctx.fillStyle = THEME.text
+	ctx.font = `700 20px ${mainFont}`
+	ctx.fillText('Spend a bribe for a reroll?', x + 72, y + 46)
+
+	registerButton({
+		id: 'use-bribe',
+		label: 'Use bribe',
+		x: x + 24,
+		y: y + overlayHeight - 54,
+		width: 170,
+		height: 36,
+		tone: 'primary',
+		action: 'use-bribe'
+	})
+
+	registerButton({
+		id: 'decline-bribe',
+		label: 'Keep it',
+		x: x + overlayWidth - 194,
+		y: y + overlayHeight - 54,
+		width: 170,
+		height: 36,
+		tone: 'muted',
+		action: 'decline-bribe'
+	})
 }
 
 const drawSummaryScene = () => {
@@ -2062,7 +2610,7 @@ const drawSummaryScene = () => {
 		`Cash banked: ${formatMoney(state.roundResult.cashOut)}`,
 		`Profit on credit: ${formatMoney(profit)}`,
 		`Sale of remaining goods: ${state.roundResult.unsoldCards}`,
-		`Total ${savingsLabel().toLowerCase()}: ${formatMoney(state.savings)}`
+		`Total ${savingsLabel().toLowerCase()}: ${savingsDisplayValue()}`
 	]
 
 	ctx.textAlign = 'left'
@@ -2162,6 +2710,10 @@ const phaseLabel = () => {
 		return 'Week summary'
 	}
 
+	if (state.phase.startsWith('bonus')) {
+		return 'Bonus round'
+	}
+
 	if (state.phase === 'start') {
 		return 'Start'
 	}
@@ -2226,9 +2778,14 @@ const render = () => {
 	} else if (state.phase.startsWith('buy')) {
 		drawBuyScene()
 		drawCardKey()
+		drawBribeHud()
+	} else if (state.phase.startsWith('bonus')) {
+		drawBonusScene()
+		drawBribeHud()
 	} else {
 		drawSellScene()
 		drawCardKey()
+		drawBribeHud()
 	}
 
 	if (state.showHowToPlay) {
@@ -2242,6 +2799,8 @@ const render = () => {
 	if (state.buySkipTransition) {
 		drawBuySkipTransitionOverlay()
 	}
+
+	drawBribePromptOverlay()
 }
 
 const resizeCanvas = () => {
@@ -2258,7 +2817,7 @@ const resizeCanvas = () => {
 }
 
 const buttonAtPoint = (x, y) => {
-	if (state.sellHeatCheck || state.sellRoundTransition || state.buySkipTransition) {
+	if ((state.sellHeatCheck && state.sellHeatCheck.stage !== 'prompt') || state.sellRoundTransition || state.buySkipTransition) {
 		return null
 	}
 
@@ -2319,6 +2878,22 @@ const runButtonAction = button => {
 
 	if (button.action === 'start-game') {
 		startRound()
+	}
+
+	if (button.action === 'buy-bonus') {
+		buyBonusCard(button.payload)
+	}
+
+	if (button.action === 'continue-bonus') {
+		continueFromBonusShop()
+	}
+
+	if (button.action === 'use-bribe') {
+		spendBribeOnHeatRoll()
+	}
+
+	if (button.action === 'decline-bribe') {
+		declineBribeOnHeatRoll()
 	}
 
 	render()

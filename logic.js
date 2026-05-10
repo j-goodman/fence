@@ -42,7 +42,13 @@
 		return highestRank
 	}
 
-	const marketValueForCard = card => card.type.marketValue * card.rank
+	const marketValueForCard = card => {
+		if (card.bonusCard) {
+			return card.bonusCard.cost
+		}
+
+		return card.type.marketValue * card.rank
+	}
 
 	const sellValueForCard = ({ card, sellPhaseRanks }) => card.type.marketValue * (sellPhaseRanks.get(card.type.key) || 0)
 
@@ -51,6 +57,10 @@
 	const roundToNearestHundred = value => Math.round(value / 100) * 100
 
 	const buyPriceForCard = card => {
+		if (card.bonusCard) {
+			return card.bonusCard.cost
+		}
+
 		if (card.type.count <= 1 || card.rank >= card.type.count) {
 			return card.type.price
 		}
