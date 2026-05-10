@@ -1083,6 +1083,7 @@ const buyCard = cardId => {
 		return
 	}
 
+	boughtCard.purchasePrice = buyPrice
 	state.hand.push(boughtCard)
 	startHandMotion(cardId, fromSlot)
 	setNotice(`Bought ${card.type.singular.toLowerCase()} ${card.rank} for ${formatMoney(buyPrice)}.`)
@@ -1503,7 +1504,7 @@ const drawHowToPlayOverlay = () => {
 	})
 }
 
-const drawCardFace = (card, x, y, size, footerText) => {
+const drawCardFace = (card, x, y, size, footerText, footerLabel = 'sell for') => {
 	const cardHeight = cardHeightFor(size)
 	const outlineWidth = Math.max(3, size * 0.034)
 	const compactCard = size < 76
@@ -1559,7 +1560,7 @@ const drawCardFace = (card, x, y, size, footerText) => {
 		ctx.textBaseline = 'top'
 		ctx.fillStyle = THEME.cardTextSoft
 		ctx.font = `600 ${footerLabelSize}px ${mainFont}`
-		ctx.fillText('sell for', x + size / 2, footerY + footerTopPadding)
+		ctx.fillText(footerLabel, x + size / 2, footerY + footerTopPadding)
 		ctx.fillStyle = THEME.cardText
 		ctx.font = `600 ${footerPriceSize}px ${mainFont}`
 		ctx.fillText(footerText, x + size / 2, footerY + footerTopPadding + footerLabelSize + footerGap)
@@ -1667,7 +1668,7 @@ const drawCardBack = (x, y, size) => {
 	ctx.restore()
 }
 
-const drawAnimatedCard = ({ card, x, y, size, footerText, face = 'front', flipProgress = null }) => {
+const drawAnimatedCard = ({ card, x, y, size, footerText, footerLabel = 'sell for', face = 'front', flipProgress = null }) => {
 	const cardHeight = cardHeightFor(size)
 
 	if (flipProgress === null) {
@@ -1676,7 +1677,7 @@ const drawAnimatedCard = ({ card, x, y, size, footerText, face = 'front', flipPr
 			return
 		}
 
-		drawCardFace(card, x, y, size, footerText)
+		drawCardFace(card, x, y, size, footerText, footerLabel)
 		return
 	}
 
@@ -1690,7 +1691,7 @@ const drawAnimatedCard = ({ card, x, y, size, footerText, face = 'front', flipPr
 	if (visibleFace === 'back') {
 		drawCardBack(-size / 2, -cardHeight / 2, size)
 	} else {
-		drawCardFace(card, -size / 2, -cardHeight / 2, size, footerText)
+		drawCardFace(card, -size / 2, -cardHeight / 2, size, footerText, footerLabel)
 	}
 
 	ctx.restore()
@@ -1961,7 +1962,15 @@ const drawSellScene = () => {
 				size: currentPosition.size
 			})
 
-			drawCardFace(card, currentPosition.x, currentPosition.y, currentPosition.size, state.sellHeatCheck ? null : formatMoney(currentValue))
+				const boughtPrice = card.purchasePrice ?? buyPriceForCard(card)
+				drawCardFace(
+					card,
+					currentPosition.x,
+					currentPosition.y,
+					currentPosition.size,
+					state.sellHeatCheck ? null : formatMoney(boughtPrice),
+					'bought for'
+				)
 
 			if (state.sellHeatCheck?.stage === 'flash' && state.sellHeatCheck.confiscatedIds.includes(card.id)) {
 				drawConfiscationFlash(currentPosition.x, currentPosition.y, currentPosition.size, clamp(state.sellHeatCheck.elapsed / SELL_HEAT_FLASH_MS, 0, 1))
@@ -2068,7 +2077,7 @@ const drawSummaryScene = () => {
 
 	registerButton({
 		id: 'next-round',
-		label: 'Shuffle the next week',
+		label: 'Continue to next week',
 		x: x + (panelWidth - 260) / 2,
 		y: y + panelHeight - 72,
 		width: 260,

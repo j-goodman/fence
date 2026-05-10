@@ -5,7 +5,7 @@ window.FENCE_CONFIG = {
 			singular: 'Jewel',
 			plural: 'Jewels',
 			count: 8,
-			marketValue: 1200,
+			marketValue: 1100,
 			price: 8500,
 			accent: '#1a6f6d',
 			imagePath: 'assets/cards/jewel.png'
@@ -15,7 +15,7 @@ window.FENCE_CONFIG = {
 			singular: 'Portrait',
 			plural: 'Portraits',
 			count: 7,
-			marketValue: 1100,
+			marketValue: 1000,
 			price: 6000,
 			accent: '#8d6a22',
 			imagePath: 'assets/cards/portrait.png'
@@ -25,7 +25,7 @@ window.FENCE_CONFIG = {
 			singular: 'Statue',
 			plural: 'Statues',
 			count: 6,
-			marketValue: 700,
+			marketValue: 600,
 			price: 3000,
 			accent: '#8b5541',
 			imagePath: 'assets/cards/statue.png'
@@ -45,7 +45,7 @@ window.FENCE_CONFIG = {
 			singular: 'Manuscript',
 			plural: 'Manuscripts',
 			count: 4,
-			marketValue: 450,
+			marketValue: 400,
 			price: 1200,
 			accent: '#4d5967',
 			imagePath: 'assets/cards/manuscript.png'
@@ -55,7 +55,7 @@ window.FENCE_CONFIG = {
 			singular: 'Clock',
 			plural: 'Clocks',
 			count: 3,
-			marketValue: 250,
+			marketValue: 200,
 			price: 500,
 			accent: '#79563d',
 			imagePath: 'assets/cards/clock.png'
@@ -65,7 +65,7 @@ window.FENCE_CONFIG = {
 			singular: 'Watch',
 			plural: 'Watches',
 			count: 2,
-			marketValue: 200,
+			marketValue: 180,
 			price: 130,
 			accent: '#4d6e8f',
 			imagePath: 'assets/cards/watch.png'

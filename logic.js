@@ -48,33 +48,18 @@
 
 	const creditUpgradeProfitThreshold = roundStartCredit => roundStartCredit * 0.2
 
-	const buyPriceStepFor = price => {
-		if (price >= 1000) {
-			return 100
-		}
-
-		if (price >= 500) {
-			return 50
-		}
-
-		if (price >= 100) {
-			return 10
-		}
-
-		return 5
-	}
+	const roundToNearestHundred = value => Math.round(value / 100) * 100
 
 	const buyPriceForCard = card => {
 		if (card.type.count <= 1 || card.rank >= card.type.count) {
 			return card.type.price
 		}
 
-		const minPrice = card.type.price * 0.8
+		const minPrice = card.type.price * 0.5
 		const rankProgress = (card.rank - 1) / (card.type.count - 1)
 		const rawPrice = minPrice + (card.type.price - minPrice) * rankProgress
-		const step = buyPriceStepFor(card.type.price)
 
-		return Math.round(rawPrice / step) * step
+		return roundToNearestHundred(rawPrice)
 	}
 
 	const creditDeltaForProfit = ({ profit, roundStartCredit }) => {
