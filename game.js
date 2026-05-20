@@ -105,7 +105,7 @@ const BONUS_CARDS = [
 		key: 'bribes',
 		name: 'Bribes',
 		cost: 5000,
-		description: 'Buy immunity from 1 item confiscation per week.',
+		description: 'Buy a re-roll on 1 item confiscation per week.',
 		overheadDelta: 200,
 		quantity: 3,
 		accent: '#9f7c3e',
@@ -116,9 +116,9 @@ const BONUS_CARDS = [
 		key: 'legitimateBusiness',
 		name: 'Legitimate Business',
 		cost: 10000,
-		description: 'Reduce your overhead with legitimate income.',
-		overheadDelta: -300,
-		quantity: 2,
+		description: 'Cut your weekly overhead by two thirds.',
+		overheadLabel: 'Minus two thirds.',
+		quantity: 1,
 		accent: '#3f7b65',
 		imagePath: 'assets/legitimate-business-card.png',
 		imageKey: 'bonus-legitimate-business'
@@ -152,11 +152,12 @@ const formatCompactMoney = value => {
 const footerHeightForPhase = () => (state.phase === 'summary' ? 0 : clamp(state.height * 0.17, 136, 164))
 const bonusOwnedCount = key => state.bonusInventory[key] || 0
 const remainingBonusCopies = key => Math.max(0, (BONUS_CARD_LOOKUP.get(key)?.quantity || 0) - bonusOwnedCount(key))
+const anyBonusCopiesRemaining = () => BONUS_CARDS.some(card => remainingBonusCopies(card.key) > 0)
 const isDebtBonusOffer = card => Boolean(card.bonusCard)
 const currentBuyQueueCapacity = () => 4 + bonusOwnedCount('expansion')
 const currentMaxHandSize = () => MAX_HAND_SIZE + bonusOwnedCount('expansion') * 3
-const currentWeeklyOverhead = () =>
-	SELL_ROUND_OVERHEAD + bonusOwnedCount('bribes') * 200 - bonusOwnedCount('legitimateBusiness') * 300 + bonusOwnedCount('expansion') * 60
+const baseWeeklyOverhead = () => SELL_ROUND_OVERHEAD + bonusOwnedCount('bribes') * 200 + bonusOwnedCount('expansion') * 60
+const currentWeeklyOverhead = () => baseWeeklyOverhead() * ((1 / 3) ** bonusOwnedCount('legitimateBusiness'))
 
 const grantBonusOwnership = bonusKey => {
 	state.bonusInventory[bonusKey] = bonusOwnedCount(bonusKey) + 1
@@ -1067,7 +1068,8 @@ const loadCardImages = async () => {
 			...BONUS_CARDS.map(card => ({ key: card.imageKey, imagePath: card.imagePath })),
 			{ key: 'question-mark', imagePath: 'assets/question-mark.png' },
 			{ key: 'fire', imagePath: 'assets/fire.png' },
-			{ key: 'bribe-icon', imagePath: 'assets/bribe-icon.png' }
+			{ key: 'bribe-icon', imagePath: 'assets/bribe-icon.png' },
+			{ key: 'jewel-icon', imagePath: 'assets/cards/jewel.png' }
 		].map(
 			type =>
 				new Promise(resolve => {
@@ -1098,6 +1100,11 @@ const openBonusShop = nextPhase => {
 		finalizeRound()
 	}
 
+	if (!anyBonusCopiesRemaining()) {
+		transitionFromBonusPhase(nextPhase)
+		return
+	}
+
 	resetCardMotion()
 	state.sellHeatCheck = null
 	state.bribePrompt = null
@@ -1107,10 +1114,7 @@ const openBonusShop = nextPhase => {
 	setNotice('Review the bonus cards. Buy any you want, or continue.')
 }
 
-const continueFromBonusShop = () => {
-	const nextPhase = state.pendingBonusPhase
-	state.pendingBonusPhase = null
-
+const transitionFromBonusPhase = nextPhase => {
 	if (nextPhase === 'buy') {
 		resetCardMotion()
 		state.buyStage += 1
@@ -1125,6 +1129,12 @@ const continueFromBonusShop = () => {
 	}
 
 	state.phase = 'summary'
+}
+
+const continueFromBonusShop = () => {
+	const nextPhase = state.pendingBonusPhase
+	state.pendingBonusPhase = null
+	transitionFromBonusPhase(nextPhase)
 }
 
 const startRound = () => {
@@ -1469,9 +1479,28 @@ const registerButton = button => {
 	ctx.fillStyle = textColor
 	ctx.textAlign = 'center'
 	ctx.textBaseline = 'middle'
+	const hoverIcon = button.hoverIconKey ? state.images.get(button.hoverIconKey) : null
+	const showHoverIcon = isHovered && hoverIcon
 
 	if (labelLines.length === 1) {
-		ctx.fillText(button.label, button.x + button.width / 2, button.y + button.height / 2 + 0.5)
+		const textCenterX = button.x + button.width / 2
+		const textCenterY = button.y + button.height / 2 + 0.5
+		ctx.fillText(button.label, textCenterX, textCenterY)
+
+		if (button.hoverIconKey && hoverIcon) {
+			const iconSize = Math.max(22, Math.min(button.height - 6, Math.round((fontSize + 2) * 1.8)))
+			const iconGap = Math.max(8, Math.round(iconSize * 0.4))
+			const labelWidth = ctx.measureText(button.label).width
+			const labelLeft = textCenterX - labelWidth / 2
+			const iconX = labelLeft - iconGap - iconSize
+			const iconY = button.y + (button.height - iconSize) / 2
+
+			ctx.save()
+			ctx.globalAlpha = showHoverIcon ? 1 : 0
+			ctx.drawImage(hoverIcon, iconX, iconY, iconSize, iconSize)
+			ctx.restore()
+		}
+
 		return
 	}
 
@@ -1538,7 +1567,7 @@ const getTopRightHudLayout = () => {
 	const rowGap = 8
 	const rowHeight = Math.max(22, Math.floor((availableHeight - rowGap * (CARD_TYPES.length - 1)) / CARD_TYPES.length))
 	const baseKeyIconSize = Math.min(30, rowHeight)
-	const keyIconSize = baseKeyIconSize * 2.35
+	const keyIconSize = baseKeyIconSize * 1.7625
 	const keyLabelFontSize = Math.max(14, baseKeyIconSize * 0.6)
 	const numberGap = 10
 	const maxCountWidth = 24
@@ -1808,12 +1837,14 @@ const drawDebtBonusOfferCard = (card, x, y, size) => {
 	const titleSize = titleLines.length > 1 ? Math.max(10, size * 0.082) : Math.max(11, size * 0.092)
 	const titleLineHeight = titleLines.length > 1 ? titleSize - 1 : titleSize
 	const titleBlockHeight = titleLines.length * titleLineHeight
-	const imageSize = size * 0.72 * 1.2
+	const legitimateBusinessImageScale = bonusCard.key === 'legitimateBusiness' ? 0.85 : 1
+	const legitimateBusinessImageYOffset = bonusCard.key === 'legitimateBusiness' ? -4 : 0
+	const imageSize = size * 0.72 * 1.2 * legitimateBusinessImageScale
 	const descriptionSize = Math.max(8, size * 0.058)
 	const innerX = x + 10
 	const innerWidth = size - 20
 	const titleTop = y + 22
-	const imageY = y + 18 + titleBlockHeight
+	const imageY = y + 18 + titleBlockHeight + legitimateBusinessImageYOffset
 
 	ctx.fillStyle = THEME.card
 	ctx.fillRect(x, y, size, cardHeight)
@@ -1991,7 +2022,7 @@ const drawCardBack = (x, y, size) => {
 	ctx.strokeRect(x + outlineWidth / 2, y + outlineWidth / 2, size - outlineWidth, cardHeight - outlineWidth)
 
 	const questionMarkImage = state.images.get('question-mark')
-	const imageSize = size * 0.54
+	const imageSize = size * 1.08
 	const imageX = x + (size - imageSize) / 2
 	const imageY = y + (cardHeight - imageSize) / 2
 
@@ -2283,7 +2314,9 @@ const drawBonusCardFace = (bonusCard, x, y, width) => {
 	const bodyLineHeight = 15
 	const metaLineHeight = 16
 	const costLine = `Cost: ${formatMoney(bonusCard.cost)}`
-	const overheadLine = `${bonusCard.overheadDelta < 0 ? '-' : '+'}${formatMoney(Math.abs(bonusCard.overheadDelta))} weekly overhead`
+	const overheadLine =
+		bonusCard.overheadLabel || `${bonusCard.overheadDelta < 0 ? '-' : '+'}${formatMoney(Math.abs(bonusCard.overheadDelta))} weekly overhead`
+	const overheadLineColor = bonusCard.overheadLabel || bonusCard.overheadDelta <= 0 ? '#2b6654' : '#7a523d'
 
 	ctx.font = `600 ${bodySize}px ${mainFont}`
 	const descriptionLines = wrapTextLines(bonusCard.description, innerWidth)
@@ -2346,7 +2379,7 @@ const drawBonusCardFace = (bonusCard, x, y, width) => {
 	ctx.fillStyle = THEME.cardTextSoft
 	ctx.font = `600 ${bodySize}px ${mainFont}`
 	ctx.fillText(costLine, innerX, costY)
-	ctx.fillStyle = bonusCard.overheadDelta <= 0 ? '#2b6654' : '#7a523d'
+	ctx.fillStyle = overheadLineColor
 	ctx.fillText(overheadLine, innerX, overheadY)
 
 	return { x: foregroundX, y, width, height }
@@ -2365,7 +2398,7 @@ const drawBonusScene = () => {
 	const stackRise = 20
 	const buttonGap = 18
 	const buttonHeight = 40
-	const subtitle = state.savings > 0 ? 'Use your savings to buy bonuses.' : 'Earn a profit to buy bonuses.'
+	const subtitle = state.savings > 0 ? 'Use your savings to buy bonuses.' : 'Get out of debt to buy bonuses.'
 	const minSectionTop = subtitleY + 40 + stackRise
 	const maxSectionTop = state.height - state.footerHeight - buttonHeight - buttonGap - cardHeight - 34
 	const sectionTop = clamp(Math.round((minSectionTop + maxSectionTop) / 2) - 40, minSectionTop, maxSectionTop)
@@ -2765,6 +2798,7 @@ const render = () => {
 			width: startButtonWidth,
 			height: startButtonHeight,
 			tone: 'primary',
+			hoverIconKey: 'jewel-icon',
 			action: 'start-game'
 		})
 		return

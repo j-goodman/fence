@@ -74,7 +74,7 @@
 
 	const creditDeltaForProfit = ({ profit, roundStartCredit }) => {
 		if (profit >= creditUpgradeProfitThreshold(roundStartCredit)) {
-			return 5000
+			return 2500
 		}
 
 		if (profit < 0) {
